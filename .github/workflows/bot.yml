@@ -1,0 +1,37 @@
+name: Sarmishsoy Water Bot
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+  schedule:
+    - cron: '0 */6 * * *'  # Har 6 soatda restart
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run bot
+        env:
+          MIJOZ_BOT_TOKEN: ${{ secrets.MIJOZ_BOT_TOKEN }}
+          ADMIN_BOT_TOKEN: ${{ secrets.ADMIN_BOT_TOKEN }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          GROUP_ID: ${{ secrets.GROUP_ID }}
+          WORK_START: ${{ secrets.WORK_START }}
+          WORK_END: ${{ secrets.WORK_END }}
+        run: |
+          cd bot
+          python main.py
