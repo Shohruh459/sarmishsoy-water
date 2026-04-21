@@ -1,7 +1,7 @@
 import os
 from datetime import datetime
-from aiogram import Dispatcher, F
-from aiogram.types import Message, CallbackQuery
+from aiogram import Dispatcher, F, Bot
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.filters import CommandStart
@@ -10,6 +10,8 @@ import database as db
 
 WORK_START = int(os.getenv("WORK_START", 8))
 WORK_END = int(os.getenv("WORK_END", 20))
+GROUP_ID = int(os.getenv("GROUP_ID", 0))
+MIJOZ_BOT_TOKEN = os.getenv("MIJOZ_BOT_TOKEN")
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # HOLATLAR (FSM)
@@ -22,11 +24,18 @@ class BuyurtmaHolat(StatesGroup):
     tolov_turi = State()
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# YORDAMCHI FUNKSIYA
+# YORDAMCHI FUNKSIYALAR
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 def ish_vaqtimi() -> bool:
     hozir = datetime.now().hour
     return WORK_START <= hozir < WORK_END
+
+async def bekor_va_bosh_menu(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer(
+        "Bekor qilindi. Asosiy menyu:",
+        reply_markup=kb.mijoz_asosiy()
+    )
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # HANDLERLAR
@@ -155,6 +164,7 @@ async def tolov_tanlash(message: Message, state: FSMContext):
         return
 
     tolov = tolov_map[message.text]
+    tolov_nomi = message.text
     data = await state.get_data()
     await state.clear()
 
@@ -177,19 +187,44 @@ async def tolov_tanlash(message: Message, state: FSMContext):
         )
 
     tur_nomi = "Baklashka (18.9L)" if data["mahsulot_turi"] == "baklashka" else "Litr suv"
-    miqdor = int(data["miqdor"]) if data["miqdor"].is_integer() else data["miqdor"]
+    miqdor_son = int(data["miqdor"]) if float(data["miqdor"]).is_integer() else data["miqdor"]
 
+    # Mijozga tasdiqlash xabari
     await message.answer(
         f"✅ Buyurtma qabul qilindi!\n\n"
         f"🆔 Buyurtma: #{order_id}\n"
         f"💧 Mahsulot: {tur_nomi}\n"
-        f"📦 Miqdor: {miqdor}\n"
+        f"📦 Miqdor: {miqdor_son}\n"
         f"📞 Telefon: {data['telefon']}\n"
         f"📍 Manzil: {data['manzil']}\n"
-        f"💳 To'lov: {message.text}\n\n"
+        f"💳 To'lov: {tolov_nomi}\n\n"
         f"⏳ Yetkazuvchi tez orada bog'lanadi!",
         reply_markup=kb.buyurtma_bekor_inline(order_id)
     )
+
+    # Guruhga xabar yuborish
+    if GROUP_ID:
+        bot = Bot(token=MIJOZ_BOT_TOKEN)
+        try:
+            await bot.send_message(
+                GROUP_ID,
+                f"🆕 YANGI BUYURTMA #{order_id}\n\n"
+                f"💧 {tur_nomi} — {miqdor_son}\n"
+                f"📞 {data['telefon']}\n"
+                f"📍 {data['manzil']}\n"
+                f"💳 {tolov_nomi}\n"
+                f"🕐 {datetime.now().strftime('%H:%M')}",
+                reply_markup=InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [InlineKeyboardButton(
+                            text="✅ Qabul qildim",
+                            callback_data=f"guruh_qabul_{order_id}"
+                        )]
+                    ]
+                )
+            )
+        finally:
+            await bot.session.close()
 
 async def buyurtmalarim(message: Message):
     pool = await db.get_pool()
@@ -259,6 +294,115 @@ async def bekor_qilish_callback(callback: CallbackQuery):
     )
     await callback.answer("✅ Buyurtma bekor qilindi!")
 
+async def guruh_qabul_callback(callback: CallbackQuery):
+    order_id = int(callback.data.split("_")[2])
+    telegram_id = callback.from_user.id
+    ism = callback.from_user.full_name
+
+    pool = await db.get_pool()
+    async with pool.acquire() as conn:
+        order = await conn.fetchrow("""
+            SELECT status FROM orders WHERE id = $1
+        """, order_id)
+
+        if not order:
+            await callback.answer("Buyurtma topilmadi!", show_alert=True)
+            return
+
+        if order["status"] != "yangi":
+            await callback.answer(
+                "Bu buyurtma allaqachon qabul qilingan!",
+                show_alert=True
+            )
+            return
+
+        # Yetkazuvchini tekshirish yoki yaratish
+        courier = await conn.fetchrow("""
+            SELECT id FROM couriers WHERE telegram_id = $1
+        """, telegram_id)
+
+        if not courier:
+            courier_id = await conn.fetchval("""
+                INSERT INTO couriers (telegram_id, ism, tur, aktiv)
+                VALUES ($1, $2, 'baklashka', true)
+                RETURNING id
+            """, telegram_id, ism)
+        else:
+            courier_id = courier["id"]
+
+        await conn.execute("""
+            UPDATE orders 
+            SET yetkazuvchi_id = $1, status = 'qabul_qilindi'
+            WHERE id = $2
+        """, courier_id, order_id)
+
+    await callback.message.edit_text(
+        callback.message.text +
+        f"\n\n✅ {ism} qabul qildi!",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="✅ Yetkazdim",
+                        callback_data=f"guruh_yetkazdi_{order_id}"
+                    ),
+                    InlineKeyboardButton(
+                        text="❌ Yetkazolmadim",
+                        callback_data=f"guruh_yetkazolmadi_{order_id}"
+                    )
+                ]
+            ]
+        )
+    )
+    await callback.answer("✅ Buyurtma qabul qilindi!")
+
+async def guruh_yetkazdi_callback(callback: CallbackQuery):
+    order_id = int(callback.data.split("_")[2])
+    pool = await db.get_pool()
+    async with pool.acquire() as conn:
+        order = await conn.fetchrow("""
+            SELECT * FROM orders WHERE id = $1
+        """, order_id)
+
+        if not order:
+            await callback.answer("Buyurtma topilmadi!", show_alert=True)
+            return
+
+        if order["status"] != "qabul_qilindi":
+            await callback.answer("Buyurtma holati noto'g'ri!", show_alert=True)
+            return
+
+        await conn.execute("""
+            UPDATE orders SET status = 'yetkazildi' WHERE id = $1
+        """, order_id)
+
+        if order["tolov_turi"] == "qarz":
+            narx = 15000 if order["mahsulot_tur"] == "baklashka" else 1000
+            summa = narx * order["miqdor"]
+            await conn.execute("""
+                INSERT INTO debts 
+                    (mijoz_telegram_id, yetkazuvchi_id, order_id, summa, qolgan_summa)
+                VALUES ($1, $2, $3, $4, $4)
+            """, order["mijoz_telegram_id"], order["yetkazuvchi_id"], order_id, summa)
+
+    await callback.message.edit_text(
+        callback.message.text + "\n\n✅ YETKAZILDI!"
+    )
+    await callback.answer("✅ Bajarildi!")
+
+async def guruh_yetkazolmadi_callback(callback: CallbackQuery):
+    order_id = int(callback.data.split("_")[2])
+    pool = await db.get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            UPDATE orders SET status = 'yetkazilmadi' WHERE id = $1
+        """, order_id)
+
+    await callback.message.edit_text(
+        callback.message.text + "\n\n❌ YETKAZILMADI!"
+    )
+    await callback.answer("❌ Qayd etildi!")
+
 async def qarzlarim(message: Message):
     pool = await db.get_pool()
     async with pool.acquire() as conn:
@@ -293,6 +437,7 @@ async def qarzlarim(message: Message):
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 def register(dp: Dispatcher):
     dp.message.register(start, CommandStart())
+    dp.message.register(bekor_va_bosh_menu, F.text == "❌ Bekor qilish")
     dp.message.register(buyurtma_boshlash, F.text == "🛒 Buyurtma berish")
     dp.message.register(buyurtmalarim, F.text == "📋 Buyurtmalarim")
     dp.message.register(qarzlarim, F.text == "💰 Qarzlarim")
@@ -302,3 +447,6 @@ def register(dp: Dispatcher):
     dp.message.register(manzil_kiritish, BuyurtmaHolat.manzil)
     dp.message.register(tolov_tanlash, BuyurtmaHolat.tolov_turi)
     dp.callback_query.register(bekor_qilish_callback, F.data.startswith("bekor_"))
+    dp.callback_query.register(guruh_qabul_callback, F.data.startswith("guruh_qabul_"))
+    dp.callback_query.register(guruh_yetkazdi_callback, F.data.startswith("guruh_yetkazdi_"))
+    dp.callback_query.register(guruh_yetkazolmadi_callback, F.data.startswith("guruh_yetkazolmadi_"))
