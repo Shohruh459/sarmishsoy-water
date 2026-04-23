@@ -204,12 +204,12 @@ async def tolov_tanlash(message: Message, state: FSMContext):
     )
 
     # Guruhga xabar yuborish
-      guruh_id = BAKLASHKA_GROUP_ID if data["mahsulot_turi"] == "baklashka" else LITR_GROUP_ID
-if guruh_id:
-    bot = Bot(token=MIJOZ_BOT_TOKEN)
-    try:
-        await bot.send_message(
-            guruh_id,
+    guruh_id = BAKLASHKA_GROUP_ID if data["mahsulot_turi"] == "baklashka" else LITR_GROUP_ID
+    if guruh_id:
+        bot = Bot(token=MIJOZ_BOT_TOKEN)
+        try:
+            await bot.send_message(
+                guruh_id,
                 f"🆕 YANGI BUYURTMA #{order_id}\n\n"
                 f"💧 {tur_nomi} — {miqdor_son}\n"
                 f"📞 {data['telefon']}\n"

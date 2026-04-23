@@ -6,6 +6,11 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.filters import CommandStart
 import keyboards as kb
 import database as db
+import os
+from aiogram import Bot
+MIJOZ_BOT_TOKEN = os.getenv("MIJOZ_BOT_TOKEN")
+BAKLASHKA_GROUP_ID = int(os.getenv("BAKLASHKA_GROUP_ID", 0))
+LITR_GROUP_ID = int(os.getenv("LITR_GROUP_ID", 0))
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # HOLATLAR (FSM)
@@ -18,6 +23,11 @@ class AdminHolat(StatesGroup):
     narx_qiymat = State()
     qarz_tolov_id = State()
     qarz_tolov_summa = State()
+    buyurtma_telefon = State()
+    buyurtma_tur = State()
+    buyurtma_miqdor = State()
+    buyurtma_manzil = State()
+    buyurtma_tolov = State()
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # YORDAMCHI FUNKSIYALAR
@@ -60,6 +70,7 @@ def admin_menu():
             [KeyboardButton(text="💰 Қарзлар")],
             [KeyboardButton(text="💸 Харажатлар")],
             [KeyboardButton(text="💲 Нархлар")],
+            [KeyboardButton(text="📞 Қўнғироқ буюртмаси")],
         ],
         resize_keyboard=True
     )
@@ -444,7 +455,190 @@ async def narx_qiymat(message: Message, state: FSMContext):
         f"💧 {tur_nomi}: {qiymat:,} сўм",
         reply_markup=admin_menu()
     )
+async def qongiroq_buyurtma(message: Message, state: FSMContext):
+    if not await admin_bormi(message.from_user.id):
+        await message.answer("❌ Рухсат йўқ!")
+        return
+    await state.set_state(AdminHolat.buyurtma_telefon)
+    await message.answer(
+        "📞 Телефон рақамни киритинг:\nМасалан: +998901234567",
+        reply_markup=bekor_menu()
+    )
 
+async def buyurtma_telefon(message: Message, state: FSMContext):
+    if message.text == "❌ Бекор қилиш":
+        await state.clear()
+        await message.answer("Бекор қилинди.", reply_markup=admin_menu())
+        return
+
+    telefon = message.text.strip()
+    if not telefon.startswith("+") or len(telefon) < 10:
+        await message.answer(
+            "❗ Телефон рақам нотўғри.\nМасалан: +998901234567"
+        )
+        return
+
+    await state.update_data(telefon=telefon)
+    await state.set_state(AdminHolat.buyurtma_tur)
+    await message.answer(
+        "💧 Маҳсулот турини танланг:",
+        reply_markup=ReplyKeyboardMarkup(
+            keyboard=[
+                [KeyboardButton(text="💧 Баклашка (18.9Л)")],
+                [KeyboardButton(text="🚰 Литр сув")],
+                [KeyboardButton(text="❌ Бекор қилиш")],
+            ],
+            resize_keyboard=True
+        )
+    )
+
+async def buyurtma_tur(message: Message, state: FSMContext):
+    if message.text == "❌ Бекор қилиш":
+        await state.clear()
+        await message.answer("Бекор қилинди.", reply_markup=admin_menu())
+        return
+
+    if message.text == "💧 Баклашка (18.9Л)":
+        tur = "baklashka"
+    elif message.text == "🚰 Литр сув":
+        tur = "litr"
+    else:
+        await message.answer("Илтимос, тугмалардан фойдаланинг.")
+        return
+
+    await state.update_data(mahsulot_turi=tur)
+    await state.set_state(AdminHolat.buyurtma_miqdor)
+
+    if tur == "baklashka":
+        await message.answer(
+            "Нечта баклашка керак?\nМасалан: 2",
+            reply_markup=bekor_menu()
+        )
+    else:
+        await message.answer(
+            "Неча литр керак?\nМасалан: 10",
+            reply_markup=bekor_menu()
+        )
+
+async def buyurtma_miqdor(message: Message, state: FSMContext):
+    if message.text == "❌ Бекор қилиш":
+        await state.clear()
+        await message.answer("Бекор қилинди.", reply_markup=admin_menu())
+        return
+
+    try:
+        miqdor = float(message.text.replace(",", "."))
+        if miqdor <= 0:
+            raise ValueError
+    except ValueError:
+        await message.answer("❗ Тўғри рақам киритинг. Масалан: 2")
+        return
+
+    await state.update_data(miqdor=miqdor)
+    await state.set_state(AdminHolat.buyurtma_manzil)
+    await message.answer(
+        "📍 Манзилни киритинг:\nМасалан: Мустақиллик кўчаси 15-уй",
+        reply_markup=bekor_menu()
+    )
+
+async def buyurtma_manzil(message: Message, state: FSMContext):
+    if message.text == "❌ Бекор қилиш":
+        await state.clear()
+        await message.answer("Бекор қилинди.", reply_markup=admin_menu())
+        return
+
+    await state.update_data(manzil=message.text.strip())
+    await state.set_state(AdminHolat.buyurtma_tolov)
+    await message.answer(
+        "💳 Тўлов турини танланг:",
+        reply_markup=ReplyKeyboardMarkup(
+            keyboard=[
+                [KeyboardButton(text="💵 Нақт")],
+                [KeyboardButton(text="📱 Click")],
+                [KeyboardButton(text="📝 Қарз")],
+                [KeyboardButton(text="❌ Бекор қилиш")],
+            ],
+            resize_keyboard=True
+        )
+    )
+
+async def buyurtma_tolov(message: Message, state: FSMContext):
+    if message.text == "❌ Бекор қилиш":
+        await state.clear()
+        await message.answer("Бекор қилинди.", reply_markup=admin_menu())
+        return
+
+    tolov_map = {
+        "💵 Нақт": "naqt",
+        "📱 Click": "click",
+        "📝 Қарз": "qarz"
+    }
+
+    if message.text not in tolov_map:
+        await message.answer("Илтимос, тугмалардан фойдаланинг.")
+        return
+
+    tolov = tolov_map[message.text]
+    tolov_nomi = message.text
+    data = await state.get_data()
+    await state.clear()
+
+    pool = await db.get_pool()
+    async with pool.acquire() as conn:
+        order_id = await conn.fetchval("""
+            INSERT INTO orders 
+                (mijoz_telegram_id, mijoz_ism, telefon,
+                 mahsulot_tur, miqdor, manzil, tolov_turi, status)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, 'yangi')
+            RETURNING id
+        """,
+            message.from_user.id,
+            f"📞 {message.from_user.full_name}",
+            data["telefon"],
+            data["mahsulot_turi"],
+            data["miqdor"],
+            data["manzil"],
+            tolov
+        )
+
+    tur_nomi = "Баклашка (18.9Л)" if data["mahsulot_turi"] == "baklashka" else "Литр сув"
+    miqdor_son = int(data["miqdor"]) if float(data["miqdor"]).is_integer() else data["miqdor"]
+
+    await message.answer(
+        f"✅ Буюртма яратилди!\n\n"
+        f"🆔 #{order_id}\n"
+        f"💧 {tur_nomi} — {miqdor_son}\n"
+        f"📞 {data['telefon']}\n"
+        f"📍 {data['manzil']}\n"
+        f"💳 {tolov_nomi}",
+        reply_markup=admin_menu()
+    )
+
+    # Guruhga xabar yuborish
+    guruh_id = BAKLASHKA_GROUP_ID if data["mahsulot_turi"] == "baklashka" else LITR_GROUP_ID
+    if guruh_id:
+        bot = Bot(token=MIJOZ_BOT_TOKEN)
+        try:
+            await bot.send_message(
+                guruh_id,
+                f"🆕 ЯНГИ БУЮРТМА #{order_id}\n"
+                f"(📞 Қўнғироқ орқали)\n\n"
+                f"💧 {tur_nomi} — {miqdor_son}\n"
+                f"📞 {data['telefon']}\n"
+                f"📍 {data['manzil']}\n"
+                f"💳 {tolov_nomi}\n"
+                f"🕐 {datetime.now().strftime('%H:%M')}",
+                reply_markup=InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [InlineKeyboardButton(
+                            text="✅ Қабул қилдим",
+                            callback_data=f"guruh_qabul_{order_id}"
+                        )]
+                    ]
+                )
+            )
+        finally:
+            await bot.session.close()
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # REGISTER
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -455,6 +649,12 @@ def register(dp: Dispatcher):
     dp.message.register(qarzlar, F.text == "💰 Қарзлар")
     dp.message.register(xarajatlar, F.text == "💸 Харажатлар")
     dp.message.register(narxlar, F.text == "💲 Нархлар")
+    dp.message.register(qongiroq_buyurtma, F.text == "📞 Қўнғироқ буюртмаси")
+    dp.message.register(buyurtma_telefon, AdminHolat.buyurtma_telefon)
+    dp.message.register(buyurtma_tur, AdminHolat.buyurtma_tur)
+    dp.message.register(buyurtma_miqdor, AdminHolat.buyurtma_miqdor)
+    dp.message.register(buyurtma_manzil, AdminHolat.buyurtma_manzil)
+    dp.message.register(buyurtma_tolov, AdminHolat.buyurtma_tolov)
     dp.message.register(xarajat_tur, AdminHolat.xarajat_tur)
     dp.message.register(xarajat_summa, AdminHolat.xarajat_summa)
     dp.message.register(xarajat_izoh, AdminHolat.xarajat_izoh)
