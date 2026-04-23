@@ -10,7 +10,8 @@ import database as db
 
 WORK_START = int(os.getenv("WORK_START", 8))
 WORK_END = int(os.getenv("WORK_END", 20))
-GROUP_ID = int(os.getenv("GROUP_ID", 0))
+BAKLASHKA_GROUP_ID = int(os.getenv("BAKLASHKA_GROUP_ID", 0))
+LITR_GROUP_ID = int(os.getenv("LITR_GROUP_ID", 0))
 MIJOZ_BOT_TOKEN = os.getenv("MIJOZ_BOT_TOKEN")
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -203,11 +204,12 @@ async def tolov_tanlash(message: Message, state: FSMContext):
     )
 
     # Guruhga xabar yuborish
-    if GROUP_ID:
-        bot = Bot(token=MIJOZ_BOT_TOKEN)
-        try:
-            await bot.send_message(
-                GROUP_ID,
+      guruh_id = BAKLASHKA_GROUP_ID if data["mahsulot_turi"] == "baklashka" else LITR_GROUP_ID
+if guruh_id:
+    bot = Bot(token=MIJOZ_BOT_TOKEN)
+    try:
+        await bot.send_message(
+            guruh_id,
                 f"🆕 YANGI BUYURTMA #{order_id}\n\n"
                 f"💧 {tur_nomi} — {miqdor_son}\n"
                 f"📞 {data['telefon']}\n"
@@ -377,7 +379,7 @@ async def guruh_yetkazdi_callback(callback: CallbackQuery):
         """, order_id)
 
         if order["tolov_turi"] == "qarz":
-            narx = 15000 if order["mahsulot_tur"] == "baklashka" else 1000
+            narx = 10000 if order["mahsulot_tur"] == "baklashka" else 200
             summa = narx * order["miqdor"]
             await conn.execute("""
                 INSERT INTO debts 

@@ -29,7 +29,8 @@ jobs:
           MIJOZ_BOT_TOKEN: ${{ secrets.MIJOZ_BOT_TOKEN }}
           ADMIN_BOT_TOKEN: ${{ secrets.ADMIN_BOT_TOKEN }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          GROUP_ID: ${{ secrets.GROUP_ID }}
+          BAKLASHKA_GROUP_ID: ${{ secrets.BAKLASHKA_GROUP_ID }}
+LITR_GROUP_ID: ${{ secrets.LITR_GROUP_ID }}
           WORK_START: ${{ secrets.WORK_START }}
           WORK_END: ${{ secrets.WORK_END }}
         run: |

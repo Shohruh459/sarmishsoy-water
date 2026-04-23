@@ -1,6 +1,6 @@
 from datetime import datetime
 from aiogram import Dispatcher, F, Bot
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.filters import CommandStart
@@ -11,16 +11,16 @@ import database as db
 # HOLATLAR (FSM)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 class AdminHolat(StatesGroup):
-    courier_ism = State()
-    courier_tur = State()
-    courier_telegram_id = State()
     xarajat_tur = State()
     xarajat_summa = State()
     xarajat_izoh = State()
-    buyurtma_tayinlash = State()
+    narx_tur = State()
+    narx_qiymat = State()
+    qarz_tolov_id = State()
+    qarz_tolov_summa = State()
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# YORDAMCHI FUNKSIYA
+# YORDAMCHI FUNKSIYALAR
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 async def admin_bormi(telegram_id: int) -> bool:
     pool = await db.get_pool()
@@ -39,26 +39,58 @@ async def admin_id_olish(telegram_id: int) -> int:
         """, telegram_id)
     return row["id"] if row else None
 
+async def narx_olish(kalit: str) -> int:
+    pool = await db.get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("""
+            SELECT qiymat FROM settings WHERE kalit = $1
+        """, kalit)
+    return int(row["qiymat"]) if row else 0
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ADMIN KLAVIATURASI (КИРИЛ)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+
+def admin_menu():
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="📊 Статистика")],
+            [KeyboardButton(text="📦 Буюртмалар")],
+            [KeyboardButton(text="💰 Қарзлар")],
+            [KeyboardButton(text="💸 Харажатлар")],
+            [KeyboardButton(text="💲 Нархлар")],
+        ],
+        resize_keyboard=True
+    )
+
+def bekor_menu():
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="❌ Бекор қилиш")],
+        ],
+        resize_keyboard=True
+    )
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # HANDLERLAR
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 async def start(message: Message):
     if not await admin_bormi(message.from_user.id):
         await message.answer(
-            "❌ Siz admin sifatida ro'yxatdan o'tmagansiz!\n"
-            "Bosh admin bilan bog'laning."
+            "❌ Сиз админ сифатида рўйхатдан ўтмагансиз!\n"
+            "Бош админ билан боғланинг."
         )
         return
-
     await message.answer(
-        f"Assalomu aleykum, {message.from_user.first_name}! 👋\n"
-        f"Admin paneliga xush kelibsiz!",
-        reply_markup=kb.admin_asosiy()
+        f"Ассалому алайкум, {message.from_user.first_name}! 👋\n"
+        f"Админ панелига хуш келибсиз!",
+        reply_markup=admin_menu()
     )
 
 async def statistika(message: Message):
     if not await admin_bormi(message.from_user.id):
-        await message.answer("❌ Ruxsat yo'q!")
+        await message.answer("❌ Рухсат йўқ!")
         return
 
     bugun = datetime.now().date()
@@ -89,22 +121,30 @@ async def statistika(message: Message):
             FROM debts WHERE holat != 'yopiq'
         """)
 
+        baklashka_narx = await narx_olish('baklashka_narx')
+        litr_narx = await narx_olish('litr_narx')
+
+        baklashka_soni = stats['baklashka'] or 0
+        litr_soni = stats['litr'] or 0
+        jami_savdo = (baklashka_soni * baklashka_narx) + (litr_soni * litr_narx)
+
     await message.answer(
-        f"📊 Bugungi statistika ({bugun.strftime('%d.%m.%Y')}):\n\n"
-        f"🆕 Yangi: {stats['yangi'] or 0} ta\n"
-        f"✅ Qabul qilindi: {stats['qabul'] or 0} ta\n"
-        f"🚚 Yetkazildi: {stats['yetkazildi'] or 0} ta\n"
-        f"❌ Yetkazilmadi: {stats['yetkazilmadi'] or 0} ta\n"
-        f"🚫 Bekor: {stats['bekor'] or 0} ta\n\n"
-        f"💧 Baklashka: {stats['baklashka'] or 0} ta\n"
-        f"🚰 Litr suv: {stats['litr'] or 0} L\n\n"
-        f"💰 Jami qarz: {jami_qarz:,.0f} so'm",
-        reply_markup=kb.admin_asosiy()
+        f"📊 Бугунги статистика ({bugun.strftime('%d.%m.%Y')}):\n\n"
+        f"🆕 Янги: {stats['yangi'] or 0} та\n"
+        f"✅ Қабул қилинди: {stats['qabul'] or 0} та\n"
+        f"🚚 Етказилди: {stats['yetkazildi'] or 0} та\n"
+        f"❌ Етказилмади: {stats['yetkazilmadi'] or 0} та\n"
+        f"🚫 Бекор: {stats['bekor'] or 0} та\n\n"
+        f"💧 Баклашка: {baklashka_soni} та\n"
+        f"🚰 Литр сув: {litr_soni} Л\n\n"
+        f"💵 Жами савдо: {jami_savdo:,.0f} сўм\n"
+        f"💰 Жами қарз: {jami_qarz:,.0f} сўм",
+        reply_markup=admin_menu()
     )
 
 async def buyurtmalar(message: Message):
     if not await admin_bormi(message.from_user.id):
-        await message.answer("❌ Ruxsat yo'q!")
+        await message.answer("❌ Рухсат йўқ!")
         return
 
     pool = await db.get_pool()
@@ -121,17 +161,17 @@ async def buyurtmalar(message: Message):
         """)
 
     if not orders:
-        await message.answer("📦 Hozircha faol buyurtma yo'q.")
+        await message.answer("📦 Ҳозирча фаол буюртма йўқ.")
         return
 
     for order in orders:
-        tur = "Baklashka" if order["mahsulot_tur"] == "baklashka" else "Litr"
-        tolov_map = {"naqt": "💵 Naqt", "click": "📱 Click", "qarz": "📝 Qarz"}
+        tur = "Баклашка" if order["mahsulot_tur"] == "baklashka" else "Литр"
+        tolov_map = {"naqt": "💵 Нақт", "click": "📱 Click", "qarz": "📝 Қарз"}
         status_map = {
-            "yangi": "🆕 Yangi",
-            "qabul_qilindi": "✅ Qabul qilindi"
+            "yangi": "🆕 Янги",
+            "qabul_qilindi": "✅ Қабул қилинди"
         }
-        courier_ism = order["courier_ism"] or "Tayinlanmagan"
+        courier_ism = order["courier_ism"] or "Тайинланмаган"
 
         matn = (
             f"🆔 #{order['id']}\n"
@@ -139,116 +179,15 @@ async def buyurtmalar(message: Message):
             f"📞 {order['telefon']}\n"
             f"📍 {order['manzil']}\n"
             f"💳 {tolov_map.get(order['tolov_turi'], '')}\n"
-            f"🚚 Yetkazuvchi: {courier_ism}\n"
+            f"🚚 Етказувчи: {courier_ism}\n"
             f"📌 {status_map.get(order['status'], order['status'])}\n"
             f"🕐 {order['yaratilgan_vaqt'].strftime('%d.%m.%Y %H:%M')}"
         )
-
-        # Yangi buyurtmaga yetkazuvchi tayinlash tugmasi
-        if order["status"] == "yangi":
-            pool2 = await db.get_pool()
-            async with pool2.acquire() as conn2:
-                couriers = await conn2.fetch("""
-                    SELECT id, ism FROM couriers WHERE aktiv = true
-                """)
-
-            if couriers:
-                from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-                tugmalar = []
-                for c in couriers:
-                    tugmalar.append([InlineKeyboardButton(
-                        text=f"👤 {c['ism']}",
-                        callback_data=f"tasdiq_{order['id']}_{c['id']}"
-                    )])
-                markup = InlineKeyboardMarkup(inline_keyboard=tugmalar)
-                await message.answer(matn, reply_markup=markup)
-            else:
-                await message.answer(matn)
-        else:
-            await message.answer(matn)
-
-async def tayinlash_callback(callback: CallbackQuery, bot: Bot):
-    parts = callback.data.split("_")
-    order_id = int(parts[1])
-    courier_id = int(parts[2])
-
-    pool = await db.get_pool()
-    async with pool.acquire() as conn:
-        await conn.execute("""
-            UPDATE orders 
-            SET yetkazuvchi_id = $1, status = 'qabul_qilindi'
-            WHERE id = $2
-        """, courier_id, order_id)
-
-        courier = await conn.fetchrow("""
-            SELECT ism, telegram_id FROM couriers WHERE id = $1
-        """, courier_id)
-
-        order = await conn.fetchrow("""
-            SELECT * FROM orders WHERE id = $1
-        """, order_id)
-
-    tur = "Baklashka (18.9L)" if order["mahsulot_tur"] == "baklashka" else "Litr suv"
-    tolov_map = {"naqt": "💵 Naqt", "click": "📱 Click", "qarz": "📝 Qarz"}
-
-    # Yetkazuvchiga xabar yuborish
-    try:
-        await bot.send_message(
-            courier["telegram_id"],
-            f"🆕 Yangi buyurtma tayinlandi!\n\n"
-            f"🆔 #{order['id']}\n"
-            f"💧 {tur} — {order['miqdor']}\n"
-            f"📞 {order['telefon']}\n"
-            f"📍 {order['manzil']}\n"
-            f"💳 {tolov_map.get(order['tolov_turi'], '')}",
-            reply_markup=kb.courier_buyurtma_inline(order_id)
-        )
-    except Exception:
-        pass
-
-    await callback.message.edit_text(
-        callback.message.text +
-        f"\n\n✅ {courier['ism']} ga tayinlandi!"
-    )
-    await callback.answer("✅ Tayinlandi!")
-
-async def yetkazuvchilar(message: Message):
-    if not await admin_bormi(message.from_user.id):
-        await message.answer("❌ Ruxsat yo'q!")
-        return
-
-    pool = await db.get_pool()
-    async with pool.acquire() as conn:
-        couriers = await conn.fetch("""
-            SELECT c.id, c.ism, c.tur, c.aktiv,
-                COUNT(o.id) FILTER (
-                    WHERE DATE(o.yaratilgan_vaqt) = CURRENT_DATE
-                    AND o.status = 'yetkazildi'
-                ) as bugun
-            FROM couriers c
-            LEFT JOIN orders o ON o.yetkazuvchi_id = c.id
-            GROUP BY c.id
-            ORDER BY c.ism
-        """)
-
-    if not couriers:
-        await message.answer("👥 Yetkazuvchilar yo'q.")
-        return
-
-    matn = "👥 Yetkazuvchilar:\n\n"
-    for c in couriers:
-        aktiv = "✅" if c["aktiv"] else "❌"
-        tur = "Baklashka" if c["tur"] == "baklashka" else "Litr"
-        matn += (
-            f"{aktiv} {c['ism']} ({tur})\n"
-            f"   Bugun: {c['bugun']} ta yetkazdi\n\n"
-        )
-
-    await message.answer(matn, reply_markup=kb.admin_asosiy())
+        await message.answer(matn)
 
 async def qarzlar(message: Message):
     if not await admin_bormi(message.from_user.id):
-        await message.answer("❌ Ruxsat yo'q!")
+        await message.answer("❌ Рухсат йўқ!")
         return
 
     pool = await db.get_pool()
@@ -257,61 +196,62 @@ async def qarzlar(message: Message):
             SELECT d.id, d.mijoz_telegram_id, d.summa,
                    d.qolgan_summa, d.holat,
                    d.birinchi_qarz_sanasi,
-                   c.ism as courier_ism
+                   c.ism as courier_ism,
+                   o.telefon, o.manzil
             FROM debts d
             LEFT JOIN couriers c ON d.yetkazuvchi_id = c.id
+            LEFT JOIN orders o ON d.order_id = o.id
             WHERE d.holat != 'yopiq'
             ORDER BY d.birinchi_qarz_sanasi
         """)
 
     if not qarzlar:
-        await message.answer("✅ Hozircha ochiq qarz yo'q!")
+        await message.answer("✅ Ҳозирча очиқ қарз йўқ!")
         return
 
-    matn = "💰 Ochiq qarzlar:\n\n"
     jami = 0
     for q in qarzlar:
-        matn += (
-            f"🆔 #{q['id']}\n"
-            f"👤 Mijoz ID: {q['mijoz_telegram_id']}\n"
-            f"💵 Jami: {q['summa']:,.0f} so'm\n"
-            f"⚠️ Qolgan: {q['qolgan_summa']:,.0f} so'm\n"
-            f"🚚 Yetkazuvchi: {q['courier_ism'] or '-'}\n"
-            f"📅 {q['birinchi_qarz_sanasi'].strftime('%d.%m.%Y')}\n\n"
+        matn = (
+            f"🆔 Қарз #{q['id']}\n"
+            f"📞 {q['telefon'] or '-'}\n"
+            f"📍 {q['manzil'] or '-'}\n"
+            f"💵 Жами: {q['summa']:,.0f} сўм\n"
+            f"⚠️ Қолган: {q['qolgan_summa']:,.0f} сўм\n"
+            f"🚚 Етказувчи: {q['courier_ism'] or '-'}\n"
+            f"📅 {q['birinchi_qarz_sanasi'].strftime('%d.%m.%Y')}"
+        )
+        await message.answer(
+            matn,
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(
+                        text="✅ Тўлов қабул қилиш",
+                        callback_data=f"qarz_tolov_{q['id']}"
+                    )]
+                ]
+            )
         )
         jami += q["qolgan_summa"]
 
-    matn += f"━━━━━━━━━━━━━━━\n💳 Jami: {jami:,.0f} so'm"
-    await message.answer(matn, reply_markup=kb.admin_asosiy())
-
-async def xarajatlar(message: Message, state: FSMContext):
-    if not await admin_bormi(message.from_user.id):
-        await message.answer("❌ Ruxsat yo'q!")
-        return
-
-    await state.set_state(AdminHolat.xarajat_tur)
     await message.answer(
-        "💸 Xarajat turini kiriting:\nMasalan: Yoqilg'i, Ta'mirlash, Boshqa",
-        reply_markup=kb.bekor_qilish()
+        f"━━━━━━━━━━━━━━━\n💳 Жами қарз: {jami:,.0f} сўм",
+        reply_markup=admin_menu()
     )
 
-async def xarajat_tur(message: Message, state: FSMContext):
-    if message.text == "❌ Bekor qilish":
-        await state.clear()
-        await message.answer("Bekor qilindi.", reply_markup=kb.admin_asosiy())
-        return
-
-    await state.update_data(tur=message.text.strip())
-    await state.set_state(AdminHolat.xarajat_summa)
-    await message.answer(
-        "💵 Summani kiriting (so'mda):\nMasalan: 150000",
-        reply_markup=kb.bekor_qilish()
+async def qarz_tolov_callback(callback: CallbackQuery, state: FSMContext):
+    qarz_id = int(callback.data.split("_")[2])
+    await state.update_data(qarz_id=qarz_id)
+    await state.set_state(AdminHolat.qarz_tolov_summa)
+    await callback.message.answer(
+        "💵 Тўлов суммасини киритинг (сўмда):\nМасалан: 50000",
+        reply_markup=bekor_menu()
     )
+    await callback.answer()
 
-async def xarajat_summa(message: Message, state: FSMContext):
-    if message.text == "❌ Bekor qilish":
+async def qarz_tolov_summa(message: Message, state: FSMContext):
+    if message.text == "❌ Бекор қилиш":
         await state.clear()
-        await message.answer("Bekor qilindi.", reply_markup=kb.admin_asosiy())
+        await message.answer("Бекор қилинди.", reply_markup=admin_menu())
         return
 
     try:
@@ -319,25 +259,104 @@ async def xarajat_summa(message: Message, state: FSMContext):
         if summa <= 0:
             raise ValueError
     except ValueError:
-        await message.answer("❗ To'g'ri summa kiriting. Masalan: 150000")
+        await message.answer("❗ Тўғри сумма киритинг. Масалан: 50000")
+        return
+
+    data = await state.get_data()
+    qarz_id = data["qarz_id"]
+    await state.clear()
+
+    pool = await db.get_pool()
+    async with pool.acquire() as conn:
+        qarz = await conn.fetchrow("""
+            SELECT * FROM debts WHERE id = $1
+        """, qarz_id)
+
+        yangi_qolgan = qarz["qolgan_summa"] - summa
+
+        if yangi_qolgan <= 0:
+            holat = "yopiq"
+            yangi_qolgan = 0
+        elif yangi_qolgan < qarz["summa"]:
+            holat = "qisman"
+        else:
+            holat = "ochiq"
+
+        await conn.execute("""
+            UPDATE debts 
+            SET qolgan_summa = $1, holat = $2
+            WHERE id = $3
+        """, yangi_qolgan, holat, qarz_id)
+
+        await conn.execute("""
+            INSERT INTO debt_payments 
+                (debt_id, summa, tolov_turi, kim_kiritdi, tasdiqlangan)
+            VALUES ($1, $2, 'naqt', $3, true)
+        """, qarz_id, summa, message.from_user.full_name)
+
+    holat_matn = "✅ Тўлиқ тўланди!" if holat == "yopiq" else f"⚠️ Қолган: {yangi_qolgan:,.0f} сўм"
+
+    await message.answer(
+        f"✅ Тўлов қабул қилинди!\n\n"
+        f"💵 Сумма: {summa:,.0f} сўм\n"
+        f"{holat_matn}",
+        reply_markup=admin_menu()
+    )
+
+async def xarajatlar(message: Message, state: FSMContext):
+    if not await admin_bormi(message.from_user.id):
+        await message.answer("❌ Рухсат йўқ!")
+        return
+
+    await state.set_state(AdminHolat.xarajat_tur)
+    await message.answer(
+        "💸 Харажат турини киритинг:\nМасалан: Ёқилғи, Таъмирлаш, Бошқа",
+        reply_markup=bekor_menu()
+    )
+
+async def xarajat_tur(message: Message, state: FSMContext):
+    if message.text == "❌ Бекор қилиш":
+        await state.clear()
+        await message.answer("Бекор қилинди.", reply_markup=admin_menu())
+        return
+
+    await state.update_data(tur=message.text.strip())
+    await state.set_state(AdminHolat.xarajat_summa)
+    await message.answer(
+        "💵 Суммани киритинг (сўмда):\nМасалан: 150000",
+        reply_markup=bekor_menu()
+    )
+
+async def xarajat_summa(message: Message, state: FSMContext):
+    if message.text == "❌ Бекор қилиш":
+        await state.clear()
+        await message.answer("Бекор қилинди.", reply_markup=admin_menu())
+        return
+
+    try:
+        summa = float(message.text.replace(",", "").replace(" ", ""))
+        if summa <= 0:
+            raise ValueError
+    except ValueError:
+        await message.answer("❗ Тўғри сумма киритинг. Масалан: 150000")
         return
 
     await state.update_data(summa=summa)
     await state.set_state(AdminHolat.xarajat_izoh)
     await message.answer(
-        "📝 Izoh kiriting (ixtiyoriy):\n"
-        "Yoki 'O'tkazish' deb yozing",
-        reply_markup=kb.bekor_qilish()
+        "📝 Изоҳ киритинг (ихтиёрий):\n"
+        "Ёки 'Ўтказиш' деб ёзинг",
+        reply_markup=bekor_menu()
     )
 
 async def xarajat_izoh(message: Message, state: FSMContext):
-    if message.text == "❌ Bekor qilish":
+    if message.text == "❌ Бекор қилиш":
         await state.clear()
-        await message.answer("Bekor qilindi.", reply_markup=kb.admin_asosiy())
+        await message.answer("Бекор қилинди.", reply_markup=admin_menu())
         return
 
     data = await state.get_data()
-    izoh = None if message.text == "O'tkazish" else message.text.strip()
+    izoh = None if message.text == "Ўтказиш" else message.text.strip()
     admin_id = await admin_id_olish(message.from_user.id)
     await state.clear()
 
@@ -349,11 +368,81 @@ async def xarajat_izoh(message: Message, state: FSMContext):
         """, data["tur"], data["summa"], izoh, admin_id)
 
     await message.answer(
-        f"✅ Xarajat qo'shildi!\n\n"
-        f"📌 Tur: {data['tur']}\n"
-        f"💵 Summa: {data['summa']:,.0f} so'm\n"
-        f"📝 Izoh: {izoh or '-'}",
-        reply_markup=kb.admin_asosiy()
+        f"✅ Харажат қўшилди!\n\n"
+        f"📌 Тур: {data['tur']}\n"
+        f"💵 Сумма: {data['summa']:,.0f} сўм\n"
+        f"📝 Изоҳ: {izoh or '-'}",
+        reply_markup=admin_menu()
+    )
+
+async def narxlar(message: Message):
+    if not await admin_bormi(message.from_user.id):
+        await message.answer("❌ Рухсат йўқ!")
+        return
+
+    baklashka_narx = await narx_olish('baklashka_narx')
+    litr_narx = await narx_olish('litr_narx')
+
+    await message.answer(
+        f"💲 Ҳозирги нархлар:\n\n"
+        f"💧 Баклашка (18.9Л): {baklashka_narx:,} сўм\n"
+        f"🚰 Литр сув: {litr_narx:,} сўм\n\n"
+        f"Қайсини ўзгартирасиз?",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(
+                    text="💧 Баклашка нархи",
+                    callback_data="narx_baklashka"
+                )],
+                [InlineKeyboardButton(
+                    text="🚰 Литр нархи",
+                    callback_data="narx_litr"
+                )]
+            ]
+        )
+    )
+
+async def narx_tanlash_callback(callback: CallbackQuery, state: FSMContext):
+    tur = callback.data.split("_")[1]
+    await state.update_data(narx_tur=tur)
+    await state.set_state(AdminHolat.narx_qiymat)
+
+    tur_nomi = "Баклашка" if tur == "baklashka" else "Литр сув"
+    await callback.message.answer(
+        f"💲 {tur_nomi} учун янги нарх киритинг (сўмда):\nМасалан: 12000",
+        reply_markup=bekor_menu()
+    )
+    await callback.answer()
+
+async def narx_qiymat(message: Message, state: FSMContext):
+    if message.text == "❌ Бекор қилиш":
+        await state.clear()
+        await message.answer("Бекор қилинди.", reply_markup=admin_menu())
+        return
+
+    try:
+        qiymat = int(message.text.replace(",", "").replace(" ", ""))
+        if qiymat <= 0:
+            raise ValueError
+    except ValueError:
+        await message.answer("❗ Тўғри сумма киритинг. Масалан: 12000")
+        return
+
+    data = await state.get_data()
+    kalit = f"{data['narx_tur']}_narx"
+    await state.clear()
+
+    pool = await db.get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            UPDATE settings SET qiymat = $1 WHERE kalit = $2
+        """, str(qiymat), kalit)
+
+    tur_nomi = "Баклашка" if data['narx_tur'] == "baklashka" else "Литр сув"
+    await message.answer(
+        f"✅ Нарх янгиланди!\n\n"
+        f"💧 {tur_nomi}: {qiymat:,} сўм",
+        reply_markup=admin_menu()
     )
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -361,14 +450,15 @@ async def xarajat_izoh(message: Message, state: FSMContext):
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 def register(dp: Dispatcher):
     dp.message.register(start, CommandStart())
-    dp.message.register(statistika, F.text == "📊 Statistika")
-    dp.message.register(buyurtmalar, F.text == "📦 Buyurtmalar")
-    dp.message.register(yetkazuvchilar, F.text == "👥 Yetkazuvchilar")
-    dp.message.register(qarzlar, F.text == "💰 Qarzlar")
-    dp.message.register(xarajatlar, F.text == "💸 Xarajatlar")
+    dp.message.register(statistika, F.text == "📊 Статистика")
+    dp.message.register(buyurtmalar, F.text == "📦 Буюртмалар")
+    dp.message.register(qarzlar, F.text == "💰 Қарзлар")
+    dp.message.register(xarajatlar, F.text == "💸 Харажатлар")
+    dp.message.register(narxlar, F.text == "💲 Нархлар")
     dp.message.register(xarajat_tur, AdminHolat.xarajat_tur)
     dp.message.register(xarajat_summa, AdminHolat.xarajat_summa)
     dp.message.register(xarajat_izoh, AdminHolat.xarajat_izoh)
-    dp.callback_query.register(
-        tayinlash_callback, F.data.startswith("tasdiq_")
-    )
+    dp.message.register(narx_qiymat, AdminHolat.narx_qiymat)
+    dp.message.register(qarz_tolov_summa, AdminHolat.qarz_tolov_summa)
+    dp.callback_query.register(narx_tanlash_callback, F.data.startswith("narx_"))
+    dp.callback_query.register(qarz_tolov_callback, F.data.startswith("qarz_tolov_"))
