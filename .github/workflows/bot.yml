@@ -30,7 +30,7 @@ jobs:
           ADMIN_BOT_TOKEN: ${{ secrets.ADMIN_BOT_TOKEN }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           BAKLASHKA_GROUP_ID: ${{ secrets.BAKLASHKA_GROUP_ID }}
-LITR_GROUP_ID: ${{ secrets.LITR_GROUP_ID }}
+          LITR_GROUP_ID: ${{ secrets.LITR_GROUP_ID }}
           WORK_START: ${{ secrets.WORK_START }}
           WORK_END: ${{ secrets.WORK_END }}
         run: |
