@@ -27,7 +27,6 @@ class AdminHolat(StatesGroup):
     buyurtma_tur = State()
     buyurtma_miqdor = State()
     buyurtma_manzil = State()
-    buyurtma_tolov = State()
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # YORDAMCHI FUNKSIYALAR
@@ -65,12 +64,9 @@ from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 def admin_menu():
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="📊 Статистика")],
-            [KeyboardButton(text="📦 Буюртмалар")],
-            [KeyboardButton(text="💰 Қарзлар")],
-            [KeyboardButton(text="💸 Харажатлар")],
-            [KeyboardButton(text="💲 Нархлар")],
-            [KeyboardButton(text="📞 Қўнғироқ буюртмаси")],
+            [KeyboardButton(text="📊 Статистика"), KeyboardButton(text="📦 Буюртмалар")],
+            [KeyboardButton(text="💰 Қарзлар"), KeyboardButton(text="💸 Харажатлар")],
+            [KeyboardButton(text="💲 Нархлар"), KeyboardButton(text="📞 Қўнғироқ буюртмаси")],
         ],
         resize_keyboard=True
     )
@@ -203,51 +199,138 @@ async def qarzlar(message: Message):
 
     pool = await db.get_pool()
     async with pool.acquire() as conn:
+        # Telefon raqam bo'yicha guruhlash
         qarzlar = await conn.fetch("""
-            SELECT d.id, d.mijoz_telegram_id, d.summa,
-                   d.qolgan_summa, d.holat,
-                   d.birinchi_qarz_sanasi,
-                   c.ism as courier_ism,
-                   o.telefon, o.manzil
+            SELECT 
+                o.telefon,
+                COUNT(d.id) as qarz_soni,
+                SUM(d.qolgan_summa) as jami_qarz
             FROM debts d
-            LEFT JOIN couriers c ON d.yetkazuvchi_id = c.id
-            LEFT JOIN orders o ON d.order_id = o.id
+            JOIN orders o ON d.order_id = o.id
             WHERE d.holat != 'yopiq'
-            ORDER BY d.birinchi_qarz_sanasi
+            GROUP BY o.telefon
+            ORDER BY jami_qarz DESC
         """)
 
     if not qarzlar:
-        await message.answer("✅ Ҳозирча очиқ қарз йўқ!")
+        await message.answer("✅ Ҳозирча очиқ қарз йўқ!", reply_markup=admin_menu())
         return
 
-    jami = 0
+    jami = sum(q["jami_qarz"] for q in qarzlar)
+
+    matn = "💰 Қарздорлар рўйхати:\n\n"
     for q in qarzlar:
-        matn = (
-            f"🆔 Қарз #{q['id']}\n"
-            f"📞 {q['telefon'] or '-'}\n"
-            f"📍 {q['manzil'] or '-'}\n"
-            f"💵 Жами: {q['summa']:,.0f} сўм\n"
-            f"⚠️ Қолган: {q['qolgan_summa']:,.0f} сўм\n"
-            f"🚚 Етказувчи: {q['courier_ism'] or '-'}\n"
-            f"📅 {q['birinchi_qarz_sanasi'].strftime('%d.%m.%Y')}"
+        matn += (
+            f"📞 {q['telefon']}\n"
+            f"💵 Қарз: {q['jami_qarz']:,.0f} сўм "
+            f"({q['qarz_soni']} та буюртма)\n\n"
         )
-        await message.answer(
-            matn,
-            reply_markup=InlineKeyboardMarkup(
-                inline_keyboard=[
-                    [InlineKeyboardButton(
-                        text="✅ Тўлов қабул қилиш",
-                        callback_data=f"qarz_tolov_{q['id']}"
-                    )]
-                ]
-            )
-        )
-        jami += q["qolgan_summa"]
 
     await message.answer(
-        f"━━━━━━━━━━━━━━━\n💳 Жами қарз: {jami:,.0f} сўм",
-        reply_markup=admin_menu()
+        matn + f"━━━━━━━━━━━━━━━\n💳 Жами: {jami:,.0f} сўм",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(
+                    text=f"📞 {q['telefon']} — {q['jami_qarz']:,.0f} сўм",
+                    callback_data=f"qarz_detail_{q['telefon']}"
+                )] for q in qarzlar
+            ] + [
+                [InlineKeyboardButton(
+                    text="✅ Тўлов қабул қилиш",
+                    callback_data="qarz_tolov_tanlash"
+                )]
+            ]
+        )
     )
+async def qarz_detail_callback(callback: CallbackQuery):
+    telefon = callback.data.replace("qarz_detail_", "")
+
+    pool = await db.get_pool()
+    async with pool.acquire() as conn:
+        qarzlar = await conn.fetch("""
+            SELECT 
+                d.id, d.summa, d.qolgan_summa, 
+                d.holat, d.birinchi_qarz_sanasi,
+                c.ism as courier_ism,
+                o.mahsulot_tur, o.miqdor, o.manzil
+            FROM debts d
+            JOIN orders o ON d.order_id = o.id
+            LEFT JOIN couriers c ON d.yetkazuvchi_id = c.id
+            WHERE d.holat != 'yopiq' AND o.telefon = $1
+            ORDER BY d.birinchi_qarz_sanasi
+        """, telefon)
+
+    if not qarzlar:
+        await callback.answer("Қарз топилмади!", show_alert=True)
+        return
+
+    jami = sum(float(q["qolgan_summa"]) for q in qarzlar)
+    matn = f"📞 {telefon} қарзлари:\n\n"
+
+    for q in qarzlar:
+        tur = "Баклашка" if q["mahsulot_tur"] == "baklashka" else "Литр"
+        matn += (
+            f"🆔 Қарз #{q['id']}\n"
+            f"💧 {tur} — {q['miqdor']}\n"
+            f"📍 {q['manzil']}\n"
+            f"🚚 {q['courier_ism'] or '-'}\n"
+            f"💵 Жами: {q['summa']:,.0f} сўм\n"
+            f"⚠️ Қолган: {q['qolgan_summa']:,.0f} сўм\n"
+            f"📅 {q['birinchi_qarz_sanasi'].strftime('%d.%m.%Y')}\n\n"
+        )
+
+    await callback.message.answer(
+        matn + f"━━━━━━━━━━━━━━━\n💳 Жами қарз: {jami:,.0f} сўм",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(
+                    text="✅ Тўлов қабул қилиш",
+                    callback_data=f"qarz_tolov_tel_{telefon}"
+                )]
+            ]
+        )
+    )
+    await callback.answer()
+
+async def qarz_tolov_telefon_callback(callback: CallbackQuery, state: FSMContext):
+    telefon = callback.data.replace("qarz_tolov_tel_", "")
+    await state.update_data(qarz_telefon=telefon)
+    await state.set_state(AdminHolat.qarz_tolov_summa)
+    await callback.message.answer(
+        f"📞 {telefon}\n"
+        f"💵 Тўлов суммасини киритинг (сўмда):\nМасалан: 50000",
+        reply_markup=bekor_menu()
+    )
+    await callback.answer()
+
+async def qarz_tolov_tanlash_callback(callback: CallbackQuery, state: FSMContext):
+    pool = await db.get_pool()
+    async with pool.acquire() as conn:
+        telefonlar = await conn.fetch("""
+            SELECT DISTINCT o.telefon, SUM(d.qolgan_summa) as jami
+            FROM debts d
+            JOIN orders o ON d.order_id = o.id
+            WHERE d.holat != 'yopiq'
+            GROUP BY o.telefon
+            ORDER BY jami DESC
+        """)
+
+    if not telefonlar:
+        await callback.answer("Қарз йўқ!", show_alert=True)
+        return
+
+    await callback.message.answer(
+        "📞 Қайси рақамдан тўлов қабул қиласиз?",
+        reply_markup=InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(
+                    text=f"📞 {t['telefon']} — {t['jami']:,.0f} сўм",
+                    callback_data=f"qarz_tolov_tel_{t['telefon']}"
+                )] for t in telefonlar
+            ]
+        )
+    )
+    await callback.answer()
 
 async def qarz_tolov_callback(callback: CallbackQuery, state: FSMContext):
     qarz_id = int(callback.data.split("_")[2])
@@ -274,46 +357,71 @@ async def qarz_tolov_summa(message: Message, state: FSMContext):
         return
 
     data = await state.get_data()
-    qarz_id = data["qarz_id"]
+    telefon = data.get("qarz_telefon")
     await state.clear()
 
     pool = await db.get_pool()
     async with pool.acquire() as conn:
-        qarz = await conn.fetchrow("""
-            SELECT * FROM debts WHERE id = $1
-        """, qarz_id)
+        # Telefon bo'yicha barcha ochiq qarzlarni olish
+        qarzlar = await conn.fetch("""
+            SELECT d.id, d.qolgan_summa
+            FROM debts d
+            JOIN orders o ON d.order_id = o.id
+            WHERE d.holat != 'yopiq' AND o.telefon = $1
+            ORDER BY d.birinchi_qarz_sanasi
+        """, telefon)
 
-        yangi_qolgan = qarz["qolgan_summa"] - summa
+        qolgan_summa = summa
+        for qarz in qarzlar:
+            if qolgan_summa <= 0:
+                break
 
-        if yangi_qolgan <= 0:
-            holat = "yopiq"
-            yangi_qolgan = 0
-        elif yangi_qolgan < qarz["summa"]:
-            holat = "qisman"
-        else:
-            holat = "ochiq"
+            qarz_qolgan = float(qarz["qolgan_summa"])
 
-        await conn.execute("""
-            UPDATE debts 
-            SET qolgan_summa = $1, holat = $2
-            WHERE id = $3
-        """, yangi_qolgan, holat, qarz_id)
+            if qolgan_summa >= qarz_qolgan:
+                # Bu qarzni to'liq yopish
+                await conn.execute("""
+                    UPDATE debts SET qolgan_summa = 0, holat = 'yopiq'
+                    WHERE id = $1
+                """, qarz["id"])
+                await conn.execute("""
+                    INSERT INTO debt_payments 
+                        (debt_id, summa, tolov_turi, kim_kiritdi, tasdiqlangan)
+                    VALUES ($1, $2, 'naqt', $3, true)
+                """, qarz["id"], qarz_qolgan, message.from_user.full_name)
+                qolgan_summa -= qarz_qolgan
+            else:
+                # Qisman to'lash
+                yangi_qolgan = qarz_qolgan - qolgan_summa
+                await conn.execute("""
+                    UPDATE debts 
+                    SET qolgan_summa = $1, holat = 'qisman'
+                    WHERE id = $2
+                """, yangi_qolgan, qarz["id"])
+                await conn.execute("""
+                    INSERT INTO debt_payments 
+                        (debt_id, summa, tolov_turi, kim_kiritdi, tasdiqlangan)
+                    VALUES ($1, $2, 'naqt', $3, true)
+                """, qarz["id"], qolgan_summa, message.from_user.full_name)
+                qolgan_summa = 0
 
-        await conn.execute("""
-            INSERT INTO debt_payments 
-                (debt_id, summa, tolov_turi, kim_kiritdi, tasdiqlangan)
-            VALUES ($1, $2, 'naqt', $3, true)
-        """, qarz_id, summa, message.from_user.full_name)
+        # Qolgan qarzni tekshirish
+        qolgan = await conn.fetchval("""
+            SELECT COALESCE(SUM(qolgan_summa), 0)
+            FROM debts d
+            JOIN orders o ON d.order_id = o.id
+            WHERE d.holat != 'yopiq' AND o.telefon = $1
+        """, telefon)
 
-    holat_matn = "✅ Тўлиқ тўланди!" if holat == "yopiq" else f"⚠️ Қолган: {yangi_qolgan:,.0f} сўм"
+    holat_matn = "✅ Барча қарзлар тўланди!" if float(qolgan) == 0 else f"⚠️ Қолган қарз: {float(qolgan):,.0f} сўм"
 
     await message.answer(
         f"✅ Тўлов қабул қилинди!\n\n"
-        f"💵 Сумма: {summa:,.0f} сўм\n"
+        f"📞 {telefon}\n"
+        f"💵 Тўланди: {summa:,.0f} сўм\n"
         f"{holat_matn}",
         reply_markup=admin_menu()
     )
-
 async def xarajatlar(message: Message, state: FSMContext):
     if not await admin_bormi(message.from_user.id):
         await message.answer("❌ Рухсат йўқ!")
@@ -547,21 +655,62 @@ async def buyurtma_manzil(message: Message, state: FSMContext):
         await message.answer("Бекор қилинди.", reply_markup=admin_menu())
         return
 
-    await state.update_data(manzil=message.text.strip())
-    await state.set_state(AdminHolat.buyurtma_tolov)
-    await message.answer(
-        "💳 Тўлов турини танланг:",
-        reply_markup=ReplyKeyboardMarkup(
-            keyboard=[
-                [KeyboardButton(text="💵 Нақт")],
-                [KeyboardButton(text="📱 Click")],
-                [KeyboardButton(text="📝 Қарз")],
-                [KeyboardButton(text="❌ Бекор қилиш")],
-            ],
-            resize_keyboard=True
+    data = await state.get_data()
+    await state.clear()
+
+    pool = await db.get_pool()
+    async with pool.acquire() as conn:
+        order_id = await conn.fetchval("""
+            INSERT INTO orders 
+                (mijoz_telegram_id, mijoz_ism, telefon,
+                 mahsulot_tur, miqdor, manzil, tolov_turi, status)
+            VALUES ($1, $2, $3, $4, $5, $6, 'noma_lum', 'yangi')
+            RETURNING id
+        """,
+            message.from_user.id,
+            f"📞 {message.from_user.full_name}",
+            data["telefon"],
+            data["mahsulot_turi"],
+            data["miqdor"],
+            message.text.strip()
         )
+
+    tur_nomi = "Баклашка (18.9Л)" if data["mahsulot_turi"] == "baklashka" else "Литр сув"
+    miqdor_son = int(data["miqdor"]) if float(data["miqdor"]).is_integer() else data["miqdor"]
+
+    await message.answer(
+        f"✅ Буюртма яратилди!\n\n"
+        f"🆔 #{order_id}\n"
+        f"💧 {tur_nomi} — {miqdor_son}\n"
+        f"📞 {data['telefon']}\n"
+        f"📍 {message.text.strip()}",
+        reply_markup=admin_menu()
     )
 
+    # Guruhga xabar yuborish
+    guruh_id = BAKLASHKA_GROUP_ID if data["mahsulot_turi"] == "baklashka" else LITR_GROUP_ID
+    if guruh_id:
+        bot = Bot(token=MIJOZ_BOT_TOKEN)
+        try:
+            await bot.send_message(
+                guruh_id,
+                f"🆕 ЯНГИ БУЮРТМА #{order_id}\n"
+                f"(📞 Қўнғироқ орқали)\n\n"
+                f"💧 {tur_nomi} — {miqdor_son}\n"
+                f"📞 {data['telefon']}\n"
+                f"📍 {message.text.strip()}\n"
+                f"🕐 {datetime.now().strftime('%H:%M')}",
+                reply_markup=InlineKeyboardMarkup(
+                    inline_keyboard=[
+                        [InlineKeyboardButton(
+                            text="✅ Қабул қилдим",
+                            callback_data=f"guruh_qabul_{order_id}"
+                        )]
+                    ]
+                )
+            )
+        finally:
+            await bot.session.close()
 async def buyurtma_tolov(message: Message, state: FSMContext):
     if message.text == "❌ Бекор қилиш":
         await state.clear()
@@ -654,11 +803,12 @@ def register(dp: Dispatcher):
     dp.message.register(buyurtma_tur, AdminHolat.buyurtma_tur)
     dp.message.register(buyurtma_miqdor, AdminHolat.buyurtma_miqdor)
     dp.message.register(buyurtma_manzil, AdminHolat.buyurtma_manzil)
-    dp.message.register(buyurtma_tolov, AdminHolat.buyurtma_tolov)
     dp.message.register(xarajat_tur, AdminHolat.xarajat_tur)
     dp.message.register(xarajat_summa, AdminHolat.xarajat_summa)
     dp.message.register(xarajat_izoh, AdminHolat.xarajat_izoh)
     dp.message.register(narx_qiymat, AdminHolat.narx_qiymat)
     dp.message.register(qarz_tolov_summa, AdminHolat.qarz_tolov_summa)
     dp.callback_query.register(narx_tanlash_callback, F.data.startswith("narx_"))
-    dp.callback_query.register(qarz_tolov_callback, F.data.startswith("qarz_tolov_"))
+    dp.callback_query.register(qarz_detail_callback, F.data.startswith("qarz_detail_"))
+    dp.callback_query.register(qarz_tolov_tanlash_callback, F.data == "qarz_tolov_tanlash")
+    dp.callback_query.register(qarz_tolov_telefon_callback, F.data.startswith("qarz_tolov_tel_"))
