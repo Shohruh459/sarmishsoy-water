@@ -5,12 +5,13 @@ on:
     branches: [ main ]
   workflow_dispatch:
   schedule:
-  - cron: '0 21 * * *'  # UTC 21:00 = O'zbekiston 02:00
+  - cron: '0 3 * * *'   # UTC 03:00 = O'zbekiston 08:00 (ish boshlanganda)
+  - cron: '0 21 * * *'  # UTC 21:00 = O'zbekiston 02:00 (tunda)
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-    timeout-minutes: 350
+    timeout-minutes: 360
 
     steps:
       - name: Checkout code
