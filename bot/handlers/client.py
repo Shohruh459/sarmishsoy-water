@@ -1,5 +1,8 @@
 import os
 from datetime import datetime
+import pytz
+
+UZ_TZ = pytz.timezone("Asia/Tashkent")
 from aiogram import Dispatcher, F, Bot
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
@@ -27,7 +30,7 @@ class BuyurtmaHolat(StatesGroup):
 # YORDAMCHI FUNKSIYALAR
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 def ish_vaqtimi() -> bool:
-    hozir = datetime.now().hour
+    hozir = datetime.now(UZ_TZ).hour
     return WORK_START <= hozir < WORK_END
 
 async def bekor_va_bosh_menu(message: Message, state: FSMContext):

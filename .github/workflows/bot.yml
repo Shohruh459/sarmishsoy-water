@@ -5,7 +5,7 @@ on:
     branches: [ main ]
   workflow_dispatch:
   schedule:
-    - cron: '0 */6 * * *'  # Har 6 soatda restart
+  - cron: '0 21 * * *'  # UTC 21:00 = O'zbekiston 02:00
 
 jobs:
   run-bot:
