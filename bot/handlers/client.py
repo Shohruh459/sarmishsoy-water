@@ -232,8 +232,7 @@ async def bekor_qilish_callback(callback: CallbackQuery):
     pool = await db.get_pool()
     async with pool.acquire() as conn:
         order = await conn.fetchrow("""
-            SELECT status, mijoz_telegram_id, mahsulot_tur, miqdor, telefon, manzil
-            FROM orders WHERE id = $1
+            SELECT status, mijoz_telegram_id FROM orders WHERE id = $1
         """, order_id)
 
         if not order:
@@ -255,23 +254,11 @@ async def bekor_qilish_callback(callback: CallbackQuery):
             UPDATE orders SET status = 'bekor' WHERE id = $1
         """, order_id)
 
-    # Guruhga xabar yuborish
-    guruh_id = BAKLASHKA_GROUP_ID if order["mahsulot_tur"] == "baklashka" else LITR_GROUP_ID
-    if guruh_id:
-        bot = Bot(token=MIJOZ_BOT_TOKEN)
-        try:
-            await bot.send_message(
-                guruh_id,
-                f"🚫 BUYURTMA BEKOR #{order_id}\n\n"
-                f"📞 {order['telefon']}\n"
-                f"📍 {order['manzil']}\n"
-                f"❌ Mijoz tomonidan bekor qilindi"
-            )
-        finally:
-            await bot.session.close()
-
-    await callback.message.edit_text("🚫 Buyurtma bekor qilindi!")
+    await callback.message.edit_text(
+        "🚫 Buyurtma bekor qilindi!"
+    )
     await callback.answer("✅ Buyurtma bekor qilindi!")
+
 async def guruh_qabul_callback(callback: CallbackQuery):
     order_id = int(callback.data.split("_")[2])
     telegram_id = callback.from_user.id
@@ -466,17 +453,17 @@ def register(dp: Dispatcher):
     dp.message.register(buyurtmalarim, F.text == "📋 Buyurtmalarim")
     dp.message.register(qarzlarim, F.text == "💰 Qarzlarim")
 
-    # State handlerlar
-    dp.message.register(mahsulot_tanlash, BuyurtmaHolat.mahsulot_turi)
-    dp.message.register(miqdor_kiritish, BuyurtmaHolat.miqdor)
-    dp.message.register(telefon_kiritish, BuyurtmaHolat.telefon)
-    dp.message.register(manzil_kiritish, BuyurtmaHolat.manzil)
-
-    # Bekor qilish — har bir state uchun alohida (STATE bilan birga!)
+    # Bekor qilish — OLDIN, har bir state uchun alohida
     dp.message.register(bekor_va_bosh_menu, F.text == "❌ Bekor qilish", BuyurtmaHolat.mahsulot_turi)
     dp.message.register(bekor_va_bosh_menu, F.text == "❌ Bekor qilish", BuyurtmaHolat.miqdor)
     dp.message.register(bekor_va_bosh_menu, F.text == "❌ Bekor qilish", BuyurtmaHolat.telefon)
     dp.message.register(bekor_va_bosh_menu, F.text == "❌ Bekor qilish", BuyurtmaHolat.manzil)
+
+    # State handlerlar — KEYIN
+    dp.message.register(mahsulot_tanlash, BuyurtmaHolat.mahsulot_turi)
+    dp.message.register(miqdor_kiritish, BuyurtmaHolat.miqdor)
+    dp.message.register(telefon_kiritish, BuyurtmaHolat.telefon)
+    dp.message.register(manzil_kiritish, BuyurtmaHolat.manzil)
 
     # Callback lar
     dp.callback_query.register(bekor_qilish_callback, F.data.startswith("bekor_"))
