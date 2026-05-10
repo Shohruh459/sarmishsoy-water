@@ -403,20 +403,15 @@ async def guruh_bekor_callback(callback: CallbackQuery):
         try:
             await bot.send_message(
                 order["mijoz_telegram_id"],
-                f"🚫 Buyurtmangiz bekor qilindi!
-
-"
-                f"🆔 Buyurtma: #{order_id}
-"
+                f"🚫 Buyurtmangiz bekor qilindi!\n\n"
+                f"🆔 Buyurtma: #{order_id}\n"
                 f"❌ Yetkazuvchi tomonidan bekor qilindi"
             )
         finally:
             await bot.session.close()
 
     await callback.message.edit_text(
-        callback.message.text + "
-
-🚫 BEKOR QILINDI!"
+        callback.message.text + "\n\n🚫 BEKOR QILINDI!"
     )
     await callback.answer("🚫 Bekor qilindi!")
 
