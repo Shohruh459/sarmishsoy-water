@@ -17,6 +17,8 @@ BAKLASHKA_GROUP_ID = int(os.getenv("BAKLASHKA_GROUP_ID", 0))
 LITR_GROUP_ID = int(os.getenv("LITR_GROUP_ID", 0))
 MIJOZ_BOT_TOKEN = os.getenv("MIJOZ_BOT_TOKEN")
 
+BEKOR = "❌ Bekor qilish"
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # HOLATLAR (FSM)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -35,10 +37,7 @@ def ish_vaqtimi() -> bool:
 
 async def bekor_va_bosh_menu(message: Message, state: FSMContext):
     await state.clear()
-    await message.answer(
-        "Bekor qilindi. Asosiy menyu:",
-        reply_markup=kb.mijoz_asosiy()
-    )
+    await message.answer("Bekor qilindi. Asosiy menyu:", reply_markup=kb.mijoz_asosiy())
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # HANDLERLAR
@@ -63,12 +62,12 @@ async def buyurtma_boshlash(message: Message, state: FSMContext):
         )
         return
     await state.set_state(BuyurtmaHolat.mahsulot_turi)
-    await message.answer(
-        "Mahsulot turini tanlang:",
-        reply_markup=kb.mahsulot_turi()
-    )
+    await message.answer("Mahsulot turini tanlang:", reply_markup=kb.mahsulot_turi())
 
 async def mahsulot_tanlash(message: Message, state: FSMContext):
+    if message.text == BEKOR:
+        await bekor_va_bosh_menu(message, state)
+        return
     if message.text == "💧 Baklashka (18.9L)":
         tur = "baklashka"
     elif message.text == "🚰 Litr suv":
@@ -92,6 +91,9 @@ async def mahsulot_tanlash(message: Message, state: FSMContext):
         )
 
 async def miqdor_kiritish(message: Message, state: FSMContext):
+    if message.text == BEKOR:
+        await bekor_va_bosh_menu(message, state)
+        return
     try:
         miqdor = float(message.text.replace(",", "."))
         if miqdor <= 0:
@@ -110,12 +112,12 @@ async def miqdor_kiritish(message: Message, state: FSMContext):
     )
 
 async def telefon_kiritish(message: Message, state: FSMContext):
+    if message.text == BEKOR:
+        await bekor_va_bosh_menu(message, state)
+        return
     telefon = message.text.strip()
     if not telefon.startswith("+") or len(telefon) < 10:
-        await message.answer(
-            "❗ Telefon raqam noto'g'ri.\n"
-            "Masalan: +998901234567"
-        )
+        await message.answer("❗ Telefon raqam noto'g'ri.\nMasalan: +998901234567")
         return
 
     await state.update_data(telefon=telefon)
@@ -126,6 +128,10 @@ async def telefon_kiritish(message: Message, state: FSMContext):
     )
 
 async def manzil_kiritish(message: Message, state: FSMContext):
+    if message.text == BEKOR:
+        await bekor_va_bosh_menu(message, state)
+        return
+
     await state.update_data(manzil=message.text.strip())
     data = await state.get_data()
     await state.clear()
@@ -161,13 +167,11 @@ async def manzil_kiritish(message: Message, state: FSMContext):
         reply_markup=kb.mijoz_asosiy()
     )
 
-    # Inline bekor qilish tugmasi alohida xabar sifatida
     await message.answer(
         "Agar bekor qilmoqchi bo'lsangiz:",
         reply_markup=kb.buyurtma_bekor_inline(order_id)
     )
 
-    # Guruhga xabar yuborish
     guruh_id = BAKLASHKA_GROUP_ID if data["mahsulot_turi"] == "baklashka" else LITR_GROUP_ID
     if guruh_id:
         bot = Bot(token=MIJOZ_BOT_TOKEN)
@@ -180,12 +184,10 @@ async def manzil_kiritish(message: Message, state: FSMContext):
                 f"📍 {data['manzil']}\n"
                 f"🕐 {datetime.now(UZ_TZ).strftime('%H:%M')}",
                 reply_markup=InlineKeyboardMarkup(
-                    inline_keyboard=[
-                        [InlineKeyboardButton(
-                            text="✅ Qabul qildim",
-                            callback_data=f"guruh_qabul_{order_id}"
-                        )]
-                    ]
+                    inline_keyboard=[[InlineKeyboardButton(
+                        text="✅ Qabul qildim",
+                        callback_data=f"guruh_qabul_{order_id}"
+                    )]]
                 )
             )
         finally:
@@ -232,7 +234,8 @@ async def bekor_qilish_callback(callback: CallbackQuery):
     pool = await db.get_pool()
     async with pool.acquire() as conn:
         order = await conn.fetchrow("""
-            SELECT status, mijoz_telegram_id FROM orders WHERE id = $1
+            SELECT status, mijoz_telegram_id, mahsulot_tur, miqdor, telefon, manzil
+            FROM orders WHERE id = $1
         """, order_id)
 
         if not order:
@@ -250,13 +253,23 @@ async def bekor_qilish_callback(callback: CallbackQuery):
             )
             return
 
-        await conn.execute("""
-            UPDATE orders SET status = 'bekor' WHERE id = $1
-        """, order_id)
+        await conn.execute("UPDATE orders SET status = 'bekor' WHERE id = $1", order_id)
 
-    await callback.message.edit_text(
-        "🚫 Buyurtma bekor qilindi!"
-    )
+    guruh_id = BAKLASHKA_GROUP_ID if order["mahsulot_tur"] == "baklashka" else LITR_GROUP_ID
+    if guruh_id:
+        bot = Bot(token=MIJOZ_BOT_TOKEN)
+        try:
+            await bot.send_message(
+                guruh_id,
+                f"🚫 BUYURTMA BEKOR #{order_id}\n\n"
+                f"📞 {order['telefon']}\n"
+                f"📍 {order['manzil']}\n"
+                f"❌ Mijoz tomonidan bekor qilindi"
+            )
+        finally:
+            await bot.session.close()
+
+    await callback.message.edit_text("🚫 Buyurtma bekor qilindi!")
     await callback.answer("✅ Buyurtma bekor qilindi!")
 
 async def guruh_qabul_callback(callback: CallbackQuery):
@@ -266,24 +279,17 @@ async def guruh_qabul_callback(callback: CallbackQuery):
 
     pool = await db.get_pool()
     async with pool.acquire() as conn:
-        order = await conn.fetchrow("""
-            SELECT status FROM orders WHERE id = $1
-        """, order_id)
+        order = await conn.fetchrow("SELECT status FROM orders WHERE id = $1", order_id)
 
         if not order:
             await callback.answer("Buyurtma topilmadi!", show_alert=True)
             return
 
         if order["status"] != "yangi":
-            await callback.answer(
-                "Bu buyurtma allaqachon qabul qilingan!",
-                show_alert=True
-            )
+            await callback.answer("Bu buyurtma allaqachon qabul qilingan!", show_alert=True)
             return
 
-        courier = await conn.fetchrow("""
-            SELECT id FROM couriers WHERE telegram_id = $1
-        """, telegram_id)
+        courier = await conn.fetchrow("SELECT id FROM couriers WHERE telegram_id = $1", telegram_id)
 
         if not courier:
             courier_id = await conn.fetchval("""
@@ -295,27 +301,17 @@ async def guruh_qabul_callback(callback: CallbackQuery):
             courier_id = courier["id"]
 
         await conn.execute("""
-            UPDATE orders 
-            SET yetkazuvchi_id = $1, status = 'qabul_qilindi'
+            UPDATE orders SET yetkazuvchi_id = $1, status = 'qabul_qilindi'
             WHERE id = $2
         """, courier_id, order_id)
 
     await callback.message.edit_text(
-        callback.message.text +
-        f"\n\n✅ {ism} qabul qildi!",
+        callback.message.text + f"\n\n✅ {ism} qabul qildi!",
         reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text="✅ Yetkazdim",
-                        callback_data=f"guruh_yetkazdi_{order_id}"
-                    ),
-                    InlineKeyboardButton(
-                        text="❌ Yetkazolmadim",
-                        callback_data=f"guruh_yetkazolmadi_{order_id}"
-                    )
-                ]
-            ]
+            inline_keyboard=[[
+                InlineKeyboardButton(text="✅ Yetkazdim", callback_data=f"guruh_yetkazdi_{order_id}"),
+                InlineKeyboardButton(text="❌ Yetkazolmadim", callback_data=f"guruh_yetkazolmadi_{order_id}")
+            ]]
         )
     )
     await callback.answer("✅ Buyurtma qabul qilindi!")
@@ -324,9 +320,7 @@ async def guruh_yetkazdi_callback(callback: CallbackQuery):
     order_id = int(callback.data.split("_")[2])
     pool = await db.get_pool()
     async with pool.acquire() as conn:
-        order = await conn.fetchrow("""
-            SELECT * FROM orders WHERE id = $1
-        """, order_id)
+        order = await conn.fetchrow("SELECT * FROM orders WHERE id = $1", order_id)
 
         if not order:
             await callback.answer("Buyurtma topilmadi!", show_alert=True)
@@ -337,25 +331,15 @@ async def guruh_yetkazdi_callback(callback: CallbackQuery):
             return
 
     await callback.message.edit_text(
-        callback.message.text +
-        f"\n\n💳 To'lov turini tanlang:",
+        callback.message.text + f"\n\n💳 To'lov turini tanlang:",
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=[
                 [
-                    InlineKeyboardButton(
-                        text="💵 Naqt",
-                        callback_data=f"tolov_naqt_{order_id}"
-                    ),
-                    InlineKeyboardButton(
-                        text="📱 Click",
-                        callback_data=f"tolov_click_{order_id}"
-                    ),
+                    InlineKeyboardButton(text="💵 Naqt", callback_data=f"tolov_naqt_{order_id}"),
+                    InlineKeyboardButton(text="📱 Click", callback_data=f"tolov_click_{order_id}"),
                 ],
                 [
-                    InlineKeyboardButton(
-                        text="📝 Keyinroq (qarz)",
-                        callback_data=f"tolov_qarz_{order_id}"
-                    ),
+                    InlineKeyboardButton(text="📝 Keyinroq (qarz)", callback_data=f"tolov_qarz_{order_id}"),
                 ],
             ]
         )
@@ -375,14 +359,10 @@ async def tolov_turi_callback(callback: CallbackQuery):
 
     pool = await db.get_pool()
     async with pool.acquire() as conn:
-        order = await conn.fetchrow("""
-            SELECT * FROM orders WHERE id = $1
-        """, order_id)
+        order = await conn.fetchrow("SELECT * FROM orders WHERE id = $1", order_id)
 
         await conn.execute("""
-            UPDATE orders 
-            SET status = 'yetkazildi', tolov_turi = $1
-            WHERE id = $2
+            UPDATE orders SET status = 'yetkazildi', tolov_turi = $1 WHERE id = $2
         """, tolov, order_id)
 
         if tolov == "qarz":
@@ -397,8 +377,7 @@ async def tolov_turi_callback(callback: CallbackQuery):
             """, order["mijoz_telegram_id"], order["yetkazuvchi_id"], order_id, summa)
 
     await callback.message.edit_text(
-        callback.message.text +
-        f"\n\n✅ Yetkazildi! To'lov: {tolov_map[tolov]}"
+        callback.message.text + f"\n\n✅ Yetkazildi! To'lov: {tolov_map[tolov]}"
     )
     await callback.answer("✅ Bajarildi!")
 
@@ -406,13 +385,9 @@ async def guruh_yetkazolmadi_callback(callback: CallbackQuery):
     order_id = int(callback.data.split("_")[2])
     pool = await db.get_pool()
     async with pool.acquire() as conn:
-        await conn.execute("""
-            UPDATE orders SET status = 'yetkazilmadi' WHERE id = $1
-        """, order_id)
+        await conn.execute("UPDATE orders SET status = 'yetkazilmadi' WHERE id = $1", order_id)
 
-    await callback.message.edit_text(
-        callback.message.text + "\n\n❌ YETKAZILMADI!"
-    )
+    await callback.message.edit_text(callback.message.text + "\n\n❌ YETKAZILMADI!")
     await callback.answer("❌ Qayd etildi!")
 
 async def qarzlarim(message: Message):
@@ -452,20 +427,10 @@ def register(dp: Dispatcher):
     dp.message.register(buyurtma_boshlash, F.text == "🛒 Buyurtma berish")
     dp.message.register(buyurtmalarim, F.text == "📋 Buyurtmalarim")
     dp.message.register(qarzlarim, F.text == "💰 Qarzlarim")
-
-    # Bekor qilish — OLDIN, har bir state uchun alohida
-    dp.message.register(bekor_va_bosh_menu, F.text == "❌ Bekor qilish", BuyurtmaHolat.mahsulot_turi)
-    dp.message.register(bekor_va_bosh_menu, F.text == "❌ Bekor qilish", BuyurtmaHolat.miqdor)
-    dp.message.register(bekor_va_bosh_menu, F.text == "❌ Bekor qilish", BuyurtmaHolat.telefon)
-    dp.message.register(bekor_va_bosh_menu, F.text == "❌ Bekor qilish", BuyurtmaHolat.manzil)
-
-    # State handlerlar — KEYIN
     dp.message.register(mahsulot_tanlash, BuyurtmaHolat.mahsulot_turi)
     dp.message.register(miqdor_kiritish, BuyurtmaHolat.miqdor)
     dp.message.register(telefon_kiritish, BuyurtmaHolat.telefon)
     dp.message.register(manzil_kiritish, BuyurtmaHolat.manzil)
-
-    # Callback lar
     dp.callback_query.register(bekor_qilish_callback, F.data.startswith("bekor_"))
     dp.callback_query.register(guruh_qabul_callback, F.data.startswith("guruh_qabul_"))
     dp.callback_query.register(guruh_yetkazdi_callback, F.data.startswith("guruh_yetkazdi_"))
