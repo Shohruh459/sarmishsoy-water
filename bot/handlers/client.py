@@ -309,10 +309,15 @@ async def guruh_qabul_callback(callback: CallbackQuery):
     await callback.message.edit_text(
         callback.message.text + f"\n\n✅ {ism} qabul qildi!",
         reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[[
-                InlineKeyboardButton(text="✅ Yetkazdim", callback_data=f"guruh_yetkazdi_{order_id}"),
-                InlineKeyboardButton(text="❌ Yetkazolmadim", callback_data=f"guruh_yetkazolmadi_{order_id}")
-            ]]
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(text="✅ Yetkazdim", callback_data=f"guruh_yetkazdi_{order_id}"),
+                    InlineKeyboardButton(text="❌ Yetkazolmadim", callback_data=f"guruh_yetkazolmadi_{order_id}"),
+                ],
+                [
+                    InlineKeyboardButton(text="🚫 Bekor qilindi", callback_data=f"guruh_bekor_{order_id}"),
+                ]
+            ]
         )
     )
     await callback.answer("✅ Buyurtma qabul qilindi!")
@@ -382,6 +387,39 @@ async def tolov_turi_callback(callback: CallbackQuery):
     )
     await callback.answer("✅ Bajarildi!")
 
+async def guruh_bekor_callback(callback: CallbackQuery):
+    order_id = int(callback.data.split("_")[2])
+    pool = await db.get_pool()
+    async with pool.acquire() as conn:
+        order = await conn.fetchrow("SELECT * FROM orders WHERE id = $1", order_id)
+        if not order:
+            await callback.answer("Buyurtma topilmadi!", show_alert=True)
+            return
+        await conn.execute("UPDATE orders SET status = 'bekor' WHERE id = $1", order_id)
+
+    # Mijozga xabar
+    if order["mijoz_telegram_id"]:
+        bot = Bot(token=MIJOZ_BOT_TOKEN)
+        try:
+            await bot.send_message(
+                order["mijoz_telegram_id"],
+                f"🚫 Buyurtmangiz bekor qilindi!
+
+"
+                f"🆔 Buyurtma: #{order_id}
+"
+                f"❌ Yetkazuvchi tomonidan bekor qilindi"
+            )
+        finally:
+            await bot.session.close()
+
+    await callback.message.edit_text(
+        callback.message.text + "
+
+🚫 BEKOR QILINDI!"
+    )
+    await callback.answer("🚫 Bekor qilindi!")
+
 async def guruh_yetkazolmadi_callback(callback: CallbackQuery):
     order_id = int(callback.data.split("_")[2])
     pool = await db.get_pool()
@@ -436,4 +474,5 @@ def register(dp: Dispatcher):
     dp.callback_query.register(guruh_qabul_callback, F.data.startswith("guruh_qabul_"))
     dp.callback_query.register(guruh_yetkazdi_callback, F.data.startswith("guruh_yetkazdi_"))
     dp.callback_query.register(guruh_yetkazolmadi_callback, F.data.startswith("guruh_yetkazolmadi_"))
+    dp.callback_query.register(guruh_bekor_callback, F.data.startswith("guruh_bekor_"))
     dp.callback_query.register(tolov_turi_callback, F.data.startswith("tolov_"))
