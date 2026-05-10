@@ -52,6 +52,7 @@ async def start(message: Message, state: FSMContext):
     )
 
 async def buyurtma_boshlash(message: Message, state: FSMContext):
+    await state.clear()
     if not ish_vaqtimi():
         await message.answer(
             f"⏰ Kechirasiz, ish vaqti tugagan!\n"
