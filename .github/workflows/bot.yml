@@ -9,8 +9,8 @@ on:
   - cron: '0 21 * * *'  # UTC 21:00 = O'zbekiston 02:00 (tunda)
 
 concurrency:
-  group: production
-  cancel-in-progress: true
+  group: ${{ github.event_name == 'push' && 'push-only' || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
 
 jobs:
   run-bot:
