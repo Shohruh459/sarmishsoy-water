@@ -4,10 +4,10 @@ import pytz
 
 UZ_TZ = pytz.timezone("Asia/Tashkent")
 from aiogram import Dispatcher, F, Bot
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, KeyboardButton, ReplyKeyboardMarkup, Contact
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.filters import CommandStart
+from aiogram.filters import CommandStart, Command
 import keyboards as kb
 import database as db
 
@@ -39,6 +39,34 @@ async def bekor_va_bosh_menu(message: Message, state: FSMContext):
     await state.clear()
     await message.answer("Bekor qilindi. Asosiy menyu:", reply_markup=kb.mijoz_asosiy())
 
+async def navbat_raqami_olish(conn) -> int:
+    """Hozirda qabul qilinmagan (yangi) buyurtmalar sonini qaytaradi"""
+    count = await conn.fetchval("""
+        SELECT COUNT(*) FROM orders WHERE status = 'yangi'
+    """)
+    return count or 0
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# TELEFON TUGMASI KLAVIATURASI
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+def telefon_klaviatura():
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="📱 Mening raqamim", request_contact=True)],
+            [KeyboardButton(text="✏️ Qo'lda kiritish")],
+            [KeyboardButton(text=BEKOR)],
+        ],
+        resize_keyboard=True
+    )
+
+def telefon_qolda_klaviatura():
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=BEKOR)],
+        ],
+        resize_keyboard=True
+    )
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # HANDLERLAR
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -50,6 +78,17 @@ async def start(message: Message, state: FSMContext):
         f"Ish vaqti: {WORK_START:02d}:00 – {WORK_END:02d}:00",
         reply_markup=kb.mijoz_asosiy()
     )
+
+async def noaniq_xabar(message: Message, state: FSMContext):
+    """Har qanday noaniq xabarga asosiy menyuni ko'rsatadi"""
+    current_state = await state.get_state()
+    if current_state is None:
+        await state.clear()
+        await message.answer(
+            f"Assalomu aleykum, {message.from_user.first_name}! 👋\n"
+            f"Asosiy menyu:",
+            reply_markup=kb.mijoz_asosiy()
+        )
 
 async def buyurtma_boshlash(message: Message, state: FSMContext):
     await state.clear()
@@ -106,11 +145,36 @@ async def miqdor_kiritish(message: Message, state: FSMContext):
     await state.update_data(miqdor=miqdor)
     await state.set_state(BuyurtmaHolat.telefon)
     await message.answer(
-        "📞 Telefon raqamni kiriting:\n"
-        "Masalan: +998901234567\n\n"
-        "⚠️ Buyurtmani qabul qiluvchi raqamni kiriting!",
-        reply_markup=kb.bekor_qilish()
+        "📞 Telefon raqamni tanlang:\n\n"
+        "📱 «Mening raqamim» — avtomatik yuborish\n"
+        "✏️ «Qo'lda kiritish» — boshqa raqam kiritish",
+        reply_markup=telefon_klaviatura()
     )
+
+async def telefon_kontakt(message: Message, state: FSMContext):
+    """Telegram kontakt tugmasi orqali raqam yuborilganda"""
+    if message.text == BEKOR:
+        await bekor_va_bosh_menu(message, state)
+        return
+
+    if message.contact:
+        telefon = message.contact.phone_number
+        if not telefon.startswith("+"):
+            telefon = "+" + telefon
+        await state.update_data(telefon=telefon)
+        await state.set_state(BuyurtmaHolat.manzil)
+        await message.answer(
+            f"✅ Raqam qabul qilindi: {telefon}\n\n"
+            f"📍 Manzilni kiriting:\nMasalan: Mustaqillik ko'chasi 15-uy",
+            reply_markup=kb.bekor_qilish()
+        )
+    elif message.text == "✏️ Qo'lda kiritish":
+        await message.answer(
+            "📞 Telefon raqamni kiriting:\n"
+            "Masalan: +998901234567\n\n"
+            "⚠️ Buyurtmani qabul qiluvchi raqamni kiriting!",
+            reply_markup=telefon_qolda_klaviatura()
+        )
 
 async def telefon_kiritish(message: Message, state: FSMContext):
     if message.text == BEKOR:
@@ -139,6 +203,9 @@ async def manzil_kiritish(message: Message, state: FSMContext):
 
     pool = await db.get_pool()
     async with pool.acquire() as conn:
+        # Navbat raqamini olish (yangi buyurtma qo'shilishidan OLDIN)
+        navbat = await navbat_raqami_olish(conn)
+
         order_id = await conn.fetchval("""
             INSERT INTO orders 
                 (mijoz_telegram_id, mijoz_ism, telefon, 
@@ -157,14 +224,21 @@ async def manzil_kiritish(message: Message, state: FSMContext):
     tur_nomi = "Baklashka (18.9L)" if data["mahsulot_turi"] == "baklashka" else "Litr suv"
     miqdor_son = int(data["miqdor"]) if float(data["miqdor"]).is_integer() else data["miqdor"]
 
+    # Navbat xabari
+    navbat_matn = ""
+    if navbat == 0:
+        navbat_matn = "\n\n🚀 Siz birinchi navbatdasiz!"
+    else:
+        navbat_matn = f"\n\n📋 Sizning navbatingiz: {navbat + 1}-chi\n⏳ Tez orada yetkazamiz!"
+
     await message.answer(
         f"✅ Buyurtma qabul qilindi!\n\n"
         f"🆔 Buyurtma: #{order_id}\n"
         f"💧 Mahsulot: {tur_nomi}\n"
         f"📦 Miqdor: {miqdor_son}\n"
         f"📞 Telefon: {data['telefon']}\n"
-        f"📍 Manzil: {data['manzil']}\n\n"
-        f"⏳ Yetkazuvchi tez orada yo'lga chiqadi!",
+        f"📍 Manzil: {data['manzil']}"
+        f"{navbat_matn}",
         reply_markup=kb.mijoz_asosiy()
     )
 
@@ -387,6 +461,22 @@ async def tolov_turi_callback(callback: CallbackQuery):
     )
     await callback.answer("✅ Bajarildi!")
 
+    if order["mijoz_telegram_id"]:
+        bot = Bot(token=MIJOZ_BOT_TOKEN)
+        try:
+            tur_nomi = "Baklashka (18.9L)" if order["mahsulot_tur"] == "baklashka" else "Litr suv"
+            miqdor_son = int(order["miqdor"]) if float(order["miqdor"]).is_integer() else order["miqdor"]
+            await bot.send_message(
+                order["mijoz_telegram_id"],
+                f"✅ Buyurtmangiz yetkazildi!\n\n"
+                f"🆔 Buyurtma: #{order_id}\n"
+                f"💧 {tur_nomi} — {miqdor_son}\n"
+                f"💳 To'lov: {tolov_map[tolov]}\n\n"
+                f"🙏 Sarmishsoy Waterni tanlaganingiz uchun rahmat!"
+            )
+        finally:
+            await bot.session.close()
+
 async def guruh_bekor_callback(callback: CallbackQuery):
     order_id = int(callback.data.split("_")[2])
     pool = await db.get_pool()
@@ -397,7 +487,6 @@ async def guruh_bekor_callback(callback: CallbackQuery):
             return
         await conn.execute("UPDATE orders SET status = 'bekor' WHERE id = $1", order_id)
 
-    # Mijozga xabar
     if order["mijoz_telegram_id"]:
         bot = Bot(token=MIJOZ_BOT_TOKEN)
         try:
@@ -463,6 +552,10 @@ def register(dp: Dispatcher):
     dp.message.register(qarzlarim, F.text == "💰 Qarzlarim")
     dp.message.register(mahsulot_tanlash, BuyurtmaHolat.mahsulot_turi)
     dp.message.register(miqdor_kiritish, BuyurtmaHolat.miqdor)
+    # Telefon — kontakt yoki qo'lda kiritish
+    dp.message.register(telefon_kontakt, BuyurtmaHolat.telefon, F.contact)
+    dp.message.register(telefon_kontakt, BuyurtmaHolat.telefon, F.text == "✏️ Qo'lda kiritish")
+    dp.message.register(bekor_va_bosh_menu, F.text == BEKOR, BuyurtmaHolat.telefon)
     dp.message.register(telefon_kiritish, BuyurtmaHolat.telefon)
     dp.message.register(manzil_kiritish, BuyurtmaHolat.manzil)
     dp.callback_query.register(bekor_qilish_callback, F.data.startswith("bekor_"))
@@ -471,3 +564,5 @@ def register(dp: Dispatcher):
     dp.callback_query.register(guruh_yetkazolmadi_callback, F.data.startswith("guruh_yetkazolmadi_"))
     dp.callback_query.register(guruh_bekor_callback, F.data.startswith("guruh_bekor_"))
     dp.callback_query.register(tolov_turi_callback, F.data.startswith("tolov_"))
+    # Noaniq xabarlar — eng oxirida (state yo'q bo'lganda)
+    dp.message.register(noaniq_xabar)
