@@ -39,11 +39,12 @@ async def bekor_va_bosh_menu(message: Message, state: FSMContext):
     await state.clear()
     await message.answer("Bekor qilindi. Asosiy menyu:", reply_markup=kb.mijoz_asosiy())
 
-async def navbat_raqami_olish(conn) -> int:
-    """Hozirda qabul qilinmagan (yangi) buyurtmalar sonini qaytaradi"""
+async def navbat_raqami_olish(conn, mahsulot_tur: str) -> int:
+    """Mahsulot turi bo'yicha qabul qilinmagan buyurtmalar sonini qaytaradi"""
     count = await conn.fetchval("""
-        SELECT COUNT(*) FROM orders WHERE status = 'yangi'
-    """)
+        SELECT COUNT(*) FROM orders 
+        WHERE status = 'yangi' AND mahsulot_tur = $1
+    """, mahsulot_tur)
     return count or 0
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -204,7 +205,7 @@ async def manzil_kiritish(message: Message, state: FSMContext):
     pool = await db.get_pool()
     async with pool.acquire() as conn:
         # Navbat raqamini olish (yangi buyurtma qo'shilishidan OLDIN)
-        navbat = await navbat_raqami_olish(conn)
+        navbat = await navbat_raqami_olish(conn, data["mahsulot_turi"])
 
         order_id = await conn.fetchval("""
             INSERT INTO orders 
